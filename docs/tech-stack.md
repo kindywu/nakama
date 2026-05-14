@@ -4,68 +4,117 @@
 
 ### 1.1 后端技术栈
 
-| 层面 | 技术选型 | 版本 | 用途 |
-|------|---------|------|------|
-| 语言 | Go | 1.26+ | 服务端主体语言 |
-| 数据库驱动 | pgx/v5 | v5.9.2 | PostgreSQL/CockroachDB 原生驱动 |
-| RPC 框架 | gRPC | v1.81.0 | 服务端 API 定义与服务实现 |
-| HTTP 网关 | gRPC-Gateway (grpc-ecosystem) | v2.29.0 | REST JSON → gRPC Protobuf 自动转换 |
-| WebSocket | gorilla/websocket | v1.5.3 | 实时通信长连接 |
-| HTTP 路由 | gorilla/mux | v1.8.1 | HTTP 请求路由 |
-| 压缩 | klauspost/compress, golang/snappy | — | HTTP 响应 gzip/flate 压缩 |
-| 结构化日志 | zap (uber) | v1.28.0 | 高性能结构化日志 |
-| 指标暴露 | Prometheus (client_golang) | v1.23.2 | Metrics 端点 + tally 抽象 |
-| JWT | golang-jwt/jwt/v5 | v5.3.1 | 会话令牌签发与验证 |
-| 密码哈希 | golang.org/x/crypto | v0.50.0 | bcrypt 密码存储 |
-| TOTP | dgryski/dgoogauth | — | MFA 多因素认证 |
-| YAML 配置 | yaml.v3 | v3.0.1 | 配置文件解析 |
-| Protobuf | google.golang.org/protobuf | v1.36.11 | 消息序列化 |
-| 全文搜索 | blugelabs/bluge | v0.2.2 | Console 全文搜索 (存储对象/用户) |
-| UUID | gofrs/uuid/v5 | v5.4.0 | 全局唯一标识符 |
-| OAuth2 | golang.org/x/oauth2 | v0.36.0 | 社交登录 (Google) |
+| 层面 | 技术选型 | 版本 | 用途 | 应用场景 |
+|------|---------|------|------|---------|
+| 语言 | Go | 1.26+ | 服务端主体语言 | 整个游戏服务器由 Go 编写,编译为单一静态二进制 |
+| 数据库 | PostgreSQL | 16.8 (Alpine) | 主数据库 | 存储玩家账户、排行榜、群组、钱包、比赛记录等所有持久化数据 |
+| 数据库 | CockroachDB | v24.1 | 可选分布式 SQL 数据库 | 需要水平扩展、多区域部署时替代 PostgreSQL |
+| 数据库驱动 | pgx/v5 | v5.9.2 | PostgreSQL/CockroachDB 原生驱动 | 高性能连接池,支持预处理语句和批量查询 |
+| DB 迁移 | sql-migrate (heroiclabs fork) | — | 数据库 schema 迁移 | 启动时自动将数据库升级到目标版本,无需手动执行 SQL |
+| RPC 框架 | gRPC | v1.81.0 | 服务端 API 定义与服务实现 | 客户端 SDK (Unity/Unreal/Godot 等) 通过 gRPC 调用游戏后端 API |
+| HTTP 网关 | gRPC-Gateway (grpc-ecosystem) | v2.29.0 | REST JSON → gRPC Protobuf 自动转换 | 让不支持 gRPC 的客户端 (如 Web 浏览器) 也能用 REST JSON 调用 API |
+| WebSocket | gorilla/websocket | v1.5.3 | 实时通信长连接 | 游戏内实时聊天、比赛帧同步、频道消息、在线状态推送 |
+| HTTP 路由 | gorilla/mux | v1.8.1 | HTTP 请求路由 | 将 HTTP 请求按路径分发到 gRPC-Gateway 或 WebSocket 处理器 |
+| HTTP 中间件 | gorilla/handlers | — | CORS、日志、压缩中间件 | Web 前端跨域访问控制,HTTP 访问日志记录,响应体压缩 |
+| 序列化 | google.golang.org/protobuf | v1.36.11 | Protocol Buffers 消息序列化 | 客户端与服务器之间的所有消息均使用 Protobuf 编码,比 JSON 体积更小速度更快 |
+| YAML 配置 | yaml.v3 | v3.0.1 | 配置文件解析 | 服务器启动时读取 YAML 配置文件或命令行参数配置运行参数 |
+| JWT | golang-jwt/jwt/v5 | v5.3.1 | 会话令牌签发与验证 (HS256) | 玩家登录后签发 JWT,后续请求携带 Token 完成身份验证;Console 管理员登录同理 |
+| OAuth2 | golang.org/x/oauth2 | v0.36.0 | 社交登录 (Google, Facebook, Apple, Steam) | 玩家使用社交账号一键登录游戏,无需注册用户名密码 |
+| 密码哈希 | golang.org/x/crypto | v0.50.0 | bcrypt 密码存储 | 玩家密码和 Console 管理员密码的哈希存储,防止拖库后明文泄露 |
+| TOTP MFA | dgryski/dgoogauth | — | 基于时间的一次性密码多因素认证 | Console 管理员可开启二次验证,登录时除密码外还需输入动态验证码 |
+| 静态加密 | crypto/aes, crypto/cipher (标准库) | — | AES-256-GCM 加密静态数据 | 对数据库中的敏感字段 (如 OAuth Token) 进行加密存储 |
+| 传输安全 | crypto/tls, crypto/x509 (标准库) | — | TLS/SSL 传输安全 | gRPC 和 HTTP API 均可配置 TLS 证书,加密所有网络通信 |
+| UUID | gofrs/uuid/v5 | v5.4.0 | 全局唯一标识符 | 为每个玩家、比赛、群组、通知等实体生成全局唯一 ID,无需数据库自增 |
+| 结构化日志 | zap (uber) | v1.28.0 | 高性能结构化日志 | 服务器所有运行日志,支持 JSON 格式输出,便于日志采集系统 (如 ELK) 分析 |
+| 日志轮转 | lumberjack | v2 | 日志文件自动轮转 | 按文件大小自动切割日志,防止磁盘写满;保留最近 N 个旧文件 |
+| 指标 | Tally v4 + tally/prometheus | — | 指标抽象层 | 业务代码通过 Tally 接口上报指标,底层自动转换为 Prometheus 格式 |
+| 指标暴露 | Prometheus (client_golang) | v1.23.2 | Metrics 端点 (端口 9100) | 运维人员配置 Prometheus 定时拉取 9100 端口获取 API 延迟、并发连接数等指标 |
+| 全文搜索 | blugelabs/bluge | v0.2.2 | 存储对象全文索引与搜索 | Console 管理员可按玩家 ID、物品名等关键词模糊搜索 Storage 中的 JSON 对象 |
+| 文本分析 | blevesearch 系列 (porter stemmer, snowball stem, vellum FST) | — | 词干提取、分词、FST 索引 | 支撑 Bluge 的全文搜索能力,支持英文词干还原 ("running" → "run") |
+| 位图索引 | RoaringBitmap/roaring | — | 压缩位图索引 | 加速 Bluge 的倒排索引查找,减少内存占用 |
+| 并发安全 | uber-go/atomic | — | 类型安全的原子操作 | 在线人数统计、消息计数等需要无锁并发的计数器场景 |
+| 跳表 | skiplist (RyanCarrier fork, 内部) | — | 排行榜排名缓存 | 百万玩家排行榜的实时排名查询,支持 O(log n) 插入和查找 |
+| Cron 解析 | cronexpr (aptible/supercronic fork, 内部) | — | 定时排行榜/锦标赛重置 | 配置 "每周一 0 点重置周榜"、"每月 1 日结算赛季" 等定时任务 |
+| 压缩 | klauspost/compress | — | HTTP 响应 gzip/flate 压缩 | REST API 返回大量 JSON 数据时自动压缩,减少带宽消耗 |
+| 压缩 | golang/snappy | — | Snappy 压缩 | 对 CPU 开销敏感的内部数据传输场景,比 gzip 更快但压缩率略低 |
+| 错误处理 | pkg/errors | — | 错误包装与追踪 | 底层错误向上层传递时保留调用栈信息,便于定位问题根因 |
+| 匿名遥测 | Segment (自定义 se 包) | — | 匿名使用统计 | Nakama 官方收集版本分布、功能使用频率等匿名数据,指导产品迭代方向 |
+| 测试 | stretchr/testify | — | 测试断言与 Mock | 单元测试中验证函数返回值和模拟外部依赖 |
 
 ### 1.2 前端技术栈 (Console 管理后台)
 
 Nakama 的 Console 前端是一个**嵌入式 Vue SPA**,源码在独立仓库 [heroiclabs/nakama-console](https://github.com/heroiclabs/nakama-console),此仓库仅包含构建产物。
 
-| 层面 | 技术选型 | 说明 |
-|------|---------|------|
-| 框架 | Vue 3 (Composition API) | SPA 单页应用 |
-| UI 组件库 | 自研 Hiro 组件库 | Heroic Labs 内部设计系统 |
-| 代码编辑器 | Monaco Editor | API Explorer 中的 JSON 编辑器 |
-| 构建工具 | Vite | 前端构建打包 |
-| 路由 | Vue Router 4 | 前端路由 |
-| 字体 | Inter, Roboto Mono | UI 字体; 等宽代码字体 |
-| 图标 | codicon (VS Code 图标集) | UI 图标 |
-| 嵌入方式 | Go `embed.FS` | 静态文件编译进二进制 |
-| 嵌入路径 | `console/ui/dist/` | 生产构建产物存放位置 |
-| Go 嵌入代码 | `console/ui.go` | `//go:embed ui/dist/*` |
+| 层面 | 技术选型 | 说明 | 应用场景 |
+|------|---------|------|---------|
+| 框架 | Vue 3 (Composition API) | SPA 单页应用 | 整个 Console 管理后台的页面渲染、组件复用和状态管理 |
+| UI 组件库 | 自研 Hiro 组件库 | Heroic Labs 内部设计系统 (Form/Table/Modal/Tab/Button/Input 等) | Console 中所有表单、表格、弹窗、标签页、按钮、输入框等 UI 元素,保证视觉一致性和交互规范 |
+| 代码编辑器 | Monaco Editor | VS Code 编辑器内核 | API Explorer 中编写 JSON 请求体 (语法高亮+自动补全+格式化);Storage 中编辑 JSON 存储对象 |
+| 构建工具 | Vite (ESBuild + Rollup) | 前端构建打包 | 将 Vue 组件、CSS、字体等源文件编译为带哈希的生产产物,支持 HMR 热更新开发 |
+| 路由 | Vue Router 4 | 前端路由 (Hash 模式) | Console 中的页面切换:从账户列表点击进入详情页,URL 变化但不刷新页面,支持浏览器前进/后退 |
+| HTTP 客户端 | fetch API | 调用 `/v2/console/...` gRPC-Gateway 端点 | Console 中所有数据操作都通过 HTTP JSON 请求与后端 Console API 通信 |
+| API Mock | MSW (Mock Service Worker) | 开发/测试中拦截 API 响应 | 前端开发时后端可能尚未就绪,MSW 在 Service Worker 层拦截请求返回假数据,实现前后端解耦并行开发 |
+| 字体 | Inter, Roboto Mono | UI 字体; 等宽代码字体 (WOFF2 格式, 多语言子集) | Inter 用于界面文字,Roboto Mono 用于 API Explorer 和 Storage 编辑器中的代码/JSON 显示 |
+| 图标 | codicon (VS Code 图标集) + Hiro 自定义 SVG 图标 | VS Code 图标集 + 游戏主题图标 | codicon 用于通用 UI 图标 (搜索、设置、刷新等);Hiro SVG 按游戏领域分 16 个主题 (achievements 成就、leaderboards 排行榜、teams 战队等) |
+| 样式 | 预编译 CSS | 随构建产物发布 | Console 所有页面样式,无运行时 CSS 编译开销 |
+| 嵌入方式 | Go `embed.FS` | 静态文件编译进二进制 | 部署时只需一个二进制文件,无需单独部署前端 Web 服务器或 CDN |
+| 嵌入路径 | `console/ui/dist/` | 生产构建产物存放位置 | Vite 构建输出到此目录,Go 编译时自动打包 |
+| Go 嵌入代码 | `console/ui.go` | `//go:embed ui/dist/*` | 编译时将整个前端代码内嵌到 server 二进制中 |
 
 Console 前端通过端口 7351 的 gRPC-Gateway 与后端 Console API 通信,所有 API 由 `console.proto` 定义。
 
 ### 1.3 运行时脚本语言
 
-| 语言 | 引擎 | 入口 | 适用场景 |
-|------|------|------|---------|
-| Lua | gopher-lua (内部 fork, `internal/gopher-lua/`) | `*.lua` 文件 | 默认运行时,生态成熟 |
-| JavaScript | goja (ES5.1+) | `index.js` | JS 开发者友好的替代方案 |
-| Go | Go native plugin (`.so`) | 导出函数 | 高性能场景,共享进程内运行 |
+| 语言 | 引擎 | 入口 | 适用场景 | 应用场景 |
+|------|------|------|---------|---------|
+| Lua | gopher-lua (内部 fork, `internal/gopher-lua/`) | `*.lua` 文件 | 默认运行时,生态成熟 | 编写服务端自定义逻辑:登录前验证、注册后发欢迎奖励、排行榜结算、比赛胜负判定、IAP 收据校验等 |
+| JavaScript | goja (ES5.1+) | `index.js` | JS 开发者友好的替代方案 | 与 Lua 相同的服务端自定义逻辑,适合前端/全栈开发者用熟悉的 JS 语法编写 |
+| Go | Go native plugin (`.so`) | 导出函数 | 高性能场景,共享进程内运行 | 需要高性能计算 (如碰撞检测、物理模拟) 的服务器逻辑,编译为 `.so` 插件加载进 Nakama 进程 |
 
 ### 1.4 内置 Lua 模块
 
 路径: `data/modules/`
 
-| 文件 | 功能 |
-|------|------|
-| `clientrpc.lua` | 客户端 RPC 调用示例 |
-| `match.lua` | 权威比赛 (Match Handler) 示例 |
-| `match_init.lua` | 比赛初始化逻辑示例 |
-| `tournament.lua` | 锦标赛逻辑示例 |
-| `iap_verifier.lua` | 内购 (IAP) 验证逻辑 |
-| `iap_verifier_rpc.lua` | 内购验证 RPC 端点 |
-| `p2prelayer.lua` | P2P 中继逻辑 |
-| `debug_utils.lua` | 调试工具函数 |
-| `runonce_check.lua` | 一次性检查逻辑 |
+| 文件 | 功能 | 应用场景 |
+|------|------|---------|
+| `clientrpc.lua` | 客户端 RPC 调用示例 | 演示如何定义客户端可调用的自定义 RPC 函数,如 `rpc_get_daily_reward` |
+| `match.lua` | 权威比赛 (Match Handler) 示例 | 演示回合制/实时比赛的生命周期管理:初始化棋盘、处理玩家出招、判定胜负 |
+| `match_init.lua` | 比赛初始化逻辑示例 | 演示从 matchmaker 匹配成功后创建比赛的完整流程 |
+| `tournament.lua` | 锦标赛逻辑示例 | 演示锦标赛的报名、分组、多轮淘汰、最终排名和奖励发放 |
+| `iap_verifier.lua` | 内购验证逻辑 | 收到客户端上报的购买收据后,向 Apple App Store / Google Play 服务器验证真伪 |
+| `iap_verifier_rpc.lua` | 内购验证 RPC 端点 | 提供客户端可直接调用的 `rpc_verify_purchase` 函数 |
+| `p2prelayer.lua` | P2P 中继逻辑 | 演示玩家之间通过服务器中继消息,实现点对点通信 |
+| `debug_utils.lua` | 调试工具函数 | 开发阶段打印运行时状态、日志辅助,便于排查 Lua 脚本问题 |
+| `runonce_check.lua` | 一次性检查逻辑 | 演示如何确保某些逻辑 (如初始化数据) 在每个服务器实例上只执行一次 |
+
+### 1.5 基础设施 (Infrastructure)
+
+| 技术 | 用途 | 应用场景 |
+|------|------|---------|
+| Docker + Docker Compose | 容器化与本地服务编排 | 开发环境一键启动 (nakama + postgres + prometheus);生产环境容器化部署 |
+| Docker Buildx | 多平台镜像构建 (linux/amd64, linux/arm64) | 构建同时适用于 x86 云服务器和 ARM 云服务器 (如 AWS Graviton) 的 Docker 镜像 |
+| Tini | 容器初始化系统 | 作为容器 PID 1 进程,正确处理 SIGTERM 信号实现优雅关闭,回收僵尸进程 |
+| PostgreSQL 16.8 (Alpine) | 生产与测试数据库 | 集成测试和 CI 中使用 Alpine 轻量镜像,启动快占用小 |
+| CockroachDB v24.1 | 可选分布式 SQL 数据库 | 游戏全球同服场景,利用 CockroachDB 的自动分片和跨区域复制实现数据库水平扩展 |
+| Prometheus | 指标采集与监控 | 运维人员配置 Prometheus 定时抓取 Nakama 9100 端口指标,配合 Grafana 构建监控大盘 |
+| Docker Hub (heroiclabs/nakama) | 容器镜像托管 | 用户通过 `docker pull heroiclabs/nakama` 直接获取官方镜像 |
+
+### 1.6 开发工具 (Dev Tools)
+
+| 层面 | 技术 | 用途 | 应用场景 |
+|------|------|------|---------|
+| Proto 管理 | Buf (buf.build) | Protocol Buffers 构建与 lint 管理 | 开发者修改 `.proto` 文件后运行 `./buf.sh` 一键生成所有代码,同时 lint 检查避免破坏性变更 |
+| Proto 生成 | protoc-gen-go | Go Protobuf 消息代码生成 | 将 `.proto` 中的 message 定义编译为 Go struct,生成序列化/反序列化方法 |
+| Proto 生成 | protoc-gen-go-grpc | Go gRPC 服务代码生成 | 将 `.proto` 中的 service 定义编译为 Go interface 和 gRPC client/server stub |
+| Proto 生成 | protoc-gen-grpc-gateway | gRPC-Gateway REST 代理代码生成 | 自动生成 REST JSON API 的路由和处理函数,无需手写 HTTP → gRPC 转换代码 |
+| Proto 生成 | protoc-gen-openapiv2 | OpenAPI/Swagger 规范生成 | 自动生成 `apigrpc.swagger.json` 和 `console.swagger.json`,用于 API 文档和客户端代码生成 |
+| 代码检查 | golangci-lint | Go 静态分析 / lint | CI 流水线中自动检查代码质量,防止常见问题 (未处理错误、死代码、风格不一致) 进入主干 |
+| 测试 | go test -race | Go 标准测试 + 竞态检测 | 本地开发和 CI 中运行测试,`-race` 在运行时检测 goroutine 数据竞争 |
+| 集成测试 | Docker Compose + PostgreSQL | 连接真实数据库的端到端测试 | `docker-compose-tests.yml` 启动完整环境运行全量测试套件,验证与真实数据库的交互正确性 |
+| CI/CD | GitHub Actions | 构建、测试、lint、发布流水线 | 代码推送自动触发:golangci-lint 检查 → 单元测试 → 多架构 Docker 镜像构建 → 推送到 Docker Hub |
+| 跨平台编译 | QEMU (docker/setup-qemu) | ARM64 指令集模拟 | GitHub Actions 的 AMD64 机器通过 QEMU 用户模式模拟 ARM64 环境,编译出 `linux/arm64` 架构的 Docker 镜像 |
+| 构建 | Go build -mod=vendor | vendored 依赖的离线构建 | 构建时不拉取网络,完全使用 `vendor/` 目录中的依赖源码,保证构建可重现 |
+| 版本注入 | -ldflags "-X main.version=..." | 编译时注入版本号和 commit ID | 通过 `nakama --version` 查看运行时确切的版本号和 Git commit,便于问题追溯 |
 
 ---
 
