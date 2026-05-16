@@ -8,6 +8,7 @@ This directory contains standalone Go client examples demonstrating Nakama's HTT
 |-----------|---------|-----------|---------------|
 | `leaderboard/` | Leaderboard (submit scores, poll ranking) | HTTP REST | `data/modules/leaderboard.lua` in runtime path |
 | `tournament/` | Tournament (create via RPC, join, submit scores) | HTTP REST | `data/modules/tournament.lua` in runtime path |
+| `matchmaker/` | Matchmaker + match join + data exchange | WebSocket (protobuf) | None |
 | `ping-pong/` | WebSocket ping/pong RTT measurement | WebSocket (protobuf) | None |
 
 ## Running
@@ -15,6 +16,7 @@ This directory contains standalone Go client examples demonstrating Nakama's HTT
 ```bash
 go run ./examples/leaderboard/
 go run ./examples/tournament/
+go run ./examples/matchmaker/
 go run ./examples/ping-pong/
 ```
 
