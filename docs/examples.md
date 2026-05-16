@@ -1116,7 +1116,73 @@ case *rtapi.Envelope_Pong:                     // 心跳回复
 
 注意 `PartyMatchmakerTicket` 和 `MatchmakerTicket` 是**两种不同的消息类型**,分别对应 Party 匹配器和个人匹配器的票据,但都写入同一个 `ev.ticket` channel。
 
-### 5.8 Matchmaker 与 Party 的关键区别总结
+### 5.8 PartyDataSend — 队内通信 vs 全局通信
+
+party 示例在进入 match 后同时使用两种数据通道,以演示**队内通信**和**全局通信**的区别:
+
+#### PartyDataSend — 队内通信
+
+```go
+func sendPartyData(conn *websocket.Conn, partyID string, opCode int64, payload []byte) {
+    env := &rtapi.Envelope{
+        Message: &rtapi.Envelope_PartyDataSend{
+            PartyDataSend: &rtapi.PartyDataSend{
+                PartyId: partyID,
+                OpCode:  opCode,
+                Data:    payload,
+            },
+        },
+    }
+    data, _ := proto.Marshal(env)
+    conn.WriteMessage(websocket.BinaryMessage, data)
+}
+```
+
+`PartyDataSend` 发送的消息**只被同一 Party 内的成员收到**,服务端根据 `PartyId` 确定广播范围。这适用于:
+- 队内战术沟通 (不暴露给对手)
+- 队伍状态同步
+
+收到的是 `Envelope_PartyData`,包含 `Presence` 字段标识发送者:
+
+```go
+case pd := <-ev.partyData:
+    log.Printf("%s got PARTY data from %s (op=%d): %s",
+        tag, pd.Presence.Username, pd.OpCode, string(pd.Data))
+```
+
+#### MatchDataSend — 全局通信
+
+`MatchDataSend` (已在 3.7 节详述) 发送的消息**被同一 Match 内所有其他玩家收到**,无论他们属于哪个 Party。这适用于:
+- 全局聊天
+- 游戏操作广播 (如"玩家 X 释放了技能")
+
+#### 对比
+
+| 消息类型 | 广播范围 | 是否包含发送者 Party 外的玩家 | 本示例用途 |
+|---------|---------|---------------------------|-----------|
+| `PartyDataSend` | 同一 Party 的成员 | 否 | 队内问候 |
+| `MatchDataSend` | 同一 Match 的所有玩家 | 是 | 全局问候 |
+
+在 10 个玩家 (3+3+3+1) 的运行中:
+- 每个**有队伍的玩家**会收到 **2 条** `PARTY data` 消息 (来自同队另外 2 人)
+- 每个玩家会收到 **9 条** `data` 消息 (来自 match 内所有其他 9 人)
+- **Solo 玩家**只收到 match data,不会收到 party data
+
+#### readLoop 中的新增类型
+
+readLoop 中新增对 `Envelope_PartyData` 的处理:
+
+```go
+case *rtapi.Envelope_PartyData:
+    select {
+    case ev.partyData <- msg.PartyData:
+    default:
+    }
+```
+
+注意 `PartyData` (接收) 和 `PartyDataSend` (发送) 是**两种不同的消息类型**,分别对应 Envelope oneof 中的 `Envelope_PartyData` (field 48) 和 `Envelope_PartyDataSend` (field 49)。这与 `MatchData`/`MatchDataSend` 的命名模式一致。
+
+### 5.9 Matchmaker 与 Party 的关键区别总结
 
 | 维度 | matchmaker 示例 | party 示例 |
 |------|----------------|------------|
@@ -1128,14 +1194,16 @@ case *rtapi.Envelope_Pong:                     // 心跳回复
 | 同步机制 | 无(独立操作) | ready/joined channel |
 | 剩余玩家 | 自然成组(如果人数是 3 的倍数) | Solo 回退机制 |
 | Query 字段 | ""(空,无筛选) | "*"(通配,匹配任意) |
+| 队内通信 | 无 | `PartyDataSend` (仅 Party 成员) |
+| 全局通信 | `MatchDataSend` | `MatchDataSend` |
 
-### 5.9 运行
+### 5.10 运行
 
 ```bash
 go run ./examples/party/
 ```
 
-### 5.10 完整消息流
+### 5.11 完整消息流
 
 ```mermaid
 sequenceDiagram
@@ -1194,13 +1262,24 @@ sequenceDiagram
     S-->>Solo: Envelope{Match{MatchId:"match-1",Presences:[...],Self:{...}}}
 
     Note over L,Solo: 阶段 4: 互发消息 + 监听 Presence
+    Note over L,M2: MatchDataSend — 全局广播 (match 内所有人收到)
+    Note over L,M2: PartyDataSend — 队内广播 (仅 Party 成员收到)
 
     L->>S: MatchDataSend "Hello from P0 (party #0)"
     S-->>M1: MatchData "Hello from P0 (party #0)" (Presence:P0)
     S-->>M2: MatchData "Hello from P0 (party #0)" (Presence:P0)
     S-->>Solo: MatchData "Hello from P0 (party #0)" (Presence:P0)
 
+    L->>S: PartyDataSend "Hello from teammate P0 (party #0)"
+    S-->>M1: PartyData "Hello from teammate P0" (Presence:P0)
+    S-->>M2: PartyData "Hello from teammate P0" (Presence:P0)
+    Note over Solo: Solo 玩家收不到 PartyData
+
     M1->>S: MatchDataSend "Hello from P1 (party #0)"
+    M1->>S: PartyDataSend "Hello from teammate P1 (party #0)"
+    S-->>L: PartyData "Hello from teammate P1" (Presence:P1)
+    S-->>M2: PartyData "Hello from teammate P1" (Presence:P1)
+
     Solo->>S: MatchDataSend "Hello from solo player P9"
 ```
 

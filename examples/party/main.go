@@ -119,6 +119,7 @@ func main() {
 type playerEvents struct {
 	party         chan *rtapi.Party
 	partyPresence chan *rtapi.PartyPresenceEvent
+	partyData     chan *rtapi.PartyData
 	ticket        chan string
 	matched       chan *rtapi.MatchmakerMatched
 	match         chan *rtapi.Match
@@ -148,6 +149,7 @@ func runPlayer(ctx context.Context, wg *sync.WaitGroup, id int, coord *coordinat
 	ev := &playerEvents{
 		party:         make(chan *rtapi.Party, 5),
 		partyPresence: make(chan *rtapi.PartyPresenceEvent, 5),
+		partyData:     make(chan *rtapi.PartyData, 5),
 		ticket:        make(chan string, 1),
 		matched:       make(chan *rtapi.MatchmakerMatched, 1),
 		match:         make(chan *rtapi.Match, 1),
@@ -217,7 +219,7 @@ func runPartyLeader(ctx context.Context, conn *websocket.Conn, tag string, ev *p
 	sendPartyMatchmakerAdd(conn, partyID)
 
 	// Wait for match and exchange data.
-	waitForMatch(ctx, conn, tag, ev, partyNum)
+	waitForMatch(ctx, conn, tag, ev, partyNum, partyID)
 }
 
 func runPartyMember(ctx context.Context, conn *websocket.Conn, tag string, ev *playerEvents, slot *partySlot, partyNum int) {
@@ -248,7 +250,7 @@ func runPartyMember(ctx context.Context, conn *websocket.Conn, tag string, ev *p
 	slot.joined <- struct{}{}
 
 	// Wait for match and exchange data.
-	waitForMatch(ctx, conn, tag, ev, partyNum)
+	waitForMatch(ctx, conn, tag, ev, partyNum, partyID)
 }
 
 func runSolo(ctx context.Context, conn *websocket.Conn, tag string, ev *playerEvents) {
@@ -309,7 +311,7 @@ func runSolo(ctx context.Context, conn *websocket.Conn, tag string, ev *playerEv
 	}
 }
 
-func waitForMatch(ctx context.Context, conn *websocket.Conn, tag string, ev *playerEvents, partyNum int) {
+func waitForMatch(ctx context.Context, conn *websocket.Conn, tag string, ev *playerEvents, partyNum int, partyID string) {
 	// Wait for matchmaker ticket.
 	var ticket string
 	select {
@@ -355,6 +357,12 @@ func waitForMatch(ctx context.Context, conn *websocket.Conn, tag string, ev *pla
 	}
 	sendMatchData(conn, matchID, 1, []byte(msg))
 
+	// Send a hello message to the party only (team members).
+	if partyID != "" {
+		partyMsg := fmt.Sprintf("Hello from teammate %s (party #%d)", tag, partyNum)
+		sendPartyData(conn, partyID, 1, []byte(partyMsg))
+	}
+
 	// Listen for match data and presence events.
 	for {
 		select {
@@ -366,6 +374,12 @@ func waitForMatch(ctx context.Context, conn *websocket.Conn, tag string, ev *pla
 				sender = d.Presence.Username
 			}
 			log.Printf("%s got data from %s (op=%d): %s", tag, sender, d.OpCode, string(d.Data))
+		case pd := <-ev.partyData:
+			sender := "unknown"
+			if pd.Presence != nil {
+				sender = pd.Presence.Username
+			}
+			log.Printf("%s got PARTY data from %s (op=%d): %s", tag, sender, pd.OpCode, string(pd.Data))
 		case p := <-ev.matchPresence:
 			joinIDs := make([]string, len(p.Joins))
 			for i, j := range p.Joins {
@@ -444,6 +458,11 @@ func readLoop(ctx context.Context, conn *websocket.Conn, tag string, ev *playerE
 		case *rtapi.Envelope_PartyPresenceEvent:
 			select {
 			case ev.partyPresence <- msg.PartyPresenceEvent:
+			default:
+			}
+		case *rtapi.Envelope_PartyData:
+			select {
+			case ev.partyData <- msg.PartyData:
 			default:
 			}
 		case *rtapi.Envelope_PartyMatchmakerTicket:
@@ -562,6 +581,20 @@ func sendMatchData(conn *websocket.Conn, matchID string, opCode int64, payload [
 		Message: &rtapi.Envelope_MatchDataSend{
 			MatchDataSend: &rtapi.MatchDataSend{
 				MatchId: matchID,
+				OpCode:  opCode,
+				Data:    payload,
+			},
+		},
+	}
+	data, _ := proto.Marshal(env)
+	conn.WriteMessage(websocket.BinaryMessage, data)
+}
+
+func sendPartyData(conn *websocket.Conn, partyID string, opCode int64, payload []byte) {
+	env := &rtapi.Envelope{
+		Message: &rtapi.Envelope_PartyDataSend{
+			PartyDataSend: &rtapi.PartyDataSend{
+				PartyId: partyID,
 				OpCode:  opCode,
 				Data:    payload,
 			},
