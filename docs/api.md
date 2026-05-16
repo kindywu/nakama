@@ -504,3 +504,18 @@ Console HTTP 网关除标准 gRPC-Gateway 路由外,还包含:
 | `/v2/console/hiro/...` | Hiro 运行时自定义处理器(认证+审计) |
 | `/` | 嵌入式 Vue SPA 首页 |
 | `/static/*` | SPA 静态资源(1年缓存) |
+
+---
+
+## 13. 相关示例
+
+以案例为主线端到端了解 API 使用,请阅读 [功能案例详解](case-studies.md)。
+
+`examples/` 目录包含 API 使用示例,帮助理解本文档中的概念:
+
+| 示例 | 涉及的 API 概念 |
+|------|---------------|
+| [leaderboard](../examples/leaderboard/) | 设备认证、Bearer Token、排行榜写入/查询、int64 字符串序列化 |
+| [tournament](../examples/tournament/) | RPC 双重编码/解码、锦标赛 join/写入、游标分页查询 |
+
+详见 [examples.md](examples.md)。

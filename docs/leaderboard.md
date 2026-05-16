@@ -466,3 +466,18 @@ RuntimeTournamentEndFunction    func(ctx, tournament *api.Tournament, end, reset
 - `owner_id_expiry_time_leaderboard_id_idx` — 用户所有排行榜记录查询
 
 **复合主键:** `(leaderboard_id, expiry_time, score, subscore, owner_id)` — 排名自然排序,无需额外索引。
+
+---
+
+## 12. 相关示例
+
+以案例为主线端到端了解排行榜和锦标赛,请阅读 [功能案例详解](case-studies.md)。
+
+`examples/` 目录包含排行榜和锦标赛的完整客户端示例,帮助理解本文档中的概念:
+
+| 示例 | 涉及的排行榜/锦标赛概念 |
+|------|----------------------|
+| [leaderboard](../examples/leaderboard/) | WriteLeaderboardRecord (upsert + best 操作符), ListLeaderboardRecords (游标分页), 实时排名刷新 |
+| [tournament](../examples/tournament/) | TournamentCreate (通过 RPC), JoinTournament, WriteTournamentRecord, 锦标赛生命周期 (5分钟 duration), LeaderboardRecordList 分页查询 |
+
+详见 [examples.md](examples.md)。

@@ -663,3 +663,19 @@ type StreamManager interface {
     ↓
 客户端 WebSocket Frame
 ```
+
+---
+
+## 13. 相关示例
+
+以案例为主线端到端了解实时功能,请阅读 [功能案例详解](case-studies.md)。
+
+`examples/` 目录包含 WebSocket 实时通信示例,帮助理解本文档中的概念:
+
+| 示例 | 涉及的实时概念 |
+|------|-------------|
+| [matchmaker](../examples/matchmaker/) | MatchmakerAdd → Ticket → Matched → MatchJoin → MatchData, Envelope 协议, 读协程分离 |
+| [party](../examples/party/) | PartyCreate → PartyJoin → PartyMatchmakerAdd → MatchJoin, Party 状态同步, Leader/Member 协调 |
+| [ping-pong](../examples/ping-pong/) | 应用层 Ping/Pong (cid 关联), RTT 测量, 双层心跳系统 |
+
+详见 [examples.md](examples.md)。

@@ -212,6 +212,13 @@ nakama/
 │
 ├── data/modules/            # 内置 Lua 脚本 (运行时自动加载)
 │
+├── examples/                # Go 客户端示例 (使用指南: docs/examples.md)
+│   ├── leaderboard/         #   排行榜 HTTP REST 客户端
+│   ├── tournament/          #   锦标赛 HTTP REST 客户端 (含 RPC)
+│   ├── matchmaker/          #   匹配器 WebSocket 客户端
+│   ├── party/               #   组队 + 匹配器 WebSocket 客户端
+│   └── ping-pong/           #   WebSocket 心跳 RTT 测量客户端
+│
 ├── sample_go_module/        # Go 插件示例
 │
 ├── vendor/                  # Go vendor 目录 (源码级依赖)
