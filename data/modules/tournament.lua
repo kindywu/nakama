@@ -135,11 +135,11 @@ local function create_tournament(context, payload)
 end
 nk.register_rpc(create_tournament, "clientrpc.create_tournament")
 
--- Server-authoritative score write for any user in a tournament.
--- Called by a dedicated server (with server key) to write a tournament
--- record on behalf of a player.
+-- Server-authoritative score write for one or many players in a tournament.
+-- Called by a dedicated server (with server key) to write tournament
+-- records on behalf of players.
 --
--- Payload (JSON):
+-- Single-player payload (JSON):
 --   tournament_id  string  (required)
 --   owner_id       string  (required)  Nakama user_id of the player
 --   score          number
@@ -147,6 +147,16 @@ nk.register_rpc(create_tournament, "clientrpc.create_tournament")
 --   metadata       table   (optional)
 --   username       string  (optional, falls back to owner_id)
 --   operator       string  (optional, "best"|"set"|"incr"|"decr")
+--
+-- Batch payload (JSON):
+--   tournament_id  string  (required)
+--   records        array   (required) each element:
+--     owner_id     string  (required)
+--     score        number
+--     subscore     number  (optional, default 0)
+--     metadata     table   (optional)
+--     username     string  (optional, falls back to owner_id)
+--     operator     string  (optional, "best"|"set"|"incr"|"decr")
 local function write_leaderboard_record(context, payload)
   local data = nk.json_decode(payload)
   if not data then
@@ -154,35 +164,63 @@ local function write_leaderboard_record(context, payload)
   end
 
   local tournament_id = data.tournament_id
-  local owner_id      = data.owner_id
-  local score         = tonumber(data.score) or 0
-  local subscore      = tonumber(data.subscore) or 0
-  local metadata      = data.metadata or {}
-  local username      = data.username or owner_id
-  local operator      = data.operator or ""
-
   if not tournament_id or tournament_id == "" then
     error("tournament_id is required")
   end
-  if not owner_id or owner_id == "" then
-    error("owner_id is required")
+
+  -- Build the list of records to write.
+  -- Supports both single (owner_id) and batch (records array) formats.
+  local entries = {}
+  if data.records and type(data.records) == "table" then
+    for i, r in ipairs(data.records) do
+      if not r.owner_id or r.owner_id == "" then
+        error("records[" .. i .. "].owner_id is required")
+      end
+      entries[#entries + 1] = {
+        owner_id = r.owner_id,
+        score    = tonumber(r.score) or 0,
+        subscore = tonumber(r.subscore) or 0,
+        metadata = r.metadata or {},
+        username = r.username or r.owner_id,
+        operator = r.operator or "",
+      }
+    end
+  elseif data.owner_id and data.owner_id ~= "" then
+    entries[1] = {
+      owner_id = data.owner_id,
+      score    = tonumber(data.score) or 0,
+      subscore = tonumber(data.subscore) or 0,
+      metadata = data.metadata or {},
+      username = data.username or data.owner_id,
+      operator = data.operator or "",
+    }
+  else
+    error("owner_id or records is required")
   end
 
-  local record = nk.tournament_record_write(
-    tournament_id,
-    owner_id,
-    username,
-    score,
-    subscore,
-    metadata,
-    operator
-  )
+  local results = {}
+  for _, e in ipairs(entries) do
+    local record = nk.tournament_record_write(
+      tournament_id,
+      e.owner_id,
+      e.username,
+      e.score,
+      e.subscore,
+      e.metadata,
+      e.operator
+    )
+    results[#results + 1] = {
+      owner_id = e.owner_id,
+      rank     = record.rank,
+      score    = record.score,
+      subscore = record.subscore,
+    }
+  end
 
   return nk.json_encode({
-    success  = true,
-    rank     = record.rank,
-    score    = record.score,
-    subscore = record.subscore
+    success = true,
+    count   = #results,
+    records = results,
   })
 end
 nk.register_rpc(write_leaderboard_record, "clientrpc.write_leaderboard_record")
