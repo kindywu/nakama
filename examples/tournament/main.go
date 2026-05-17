@@ -52,6 +52,7 @@ type rpcResponse struct {
 // tournamentCreateResponse is the JSON inside rpcResponse.Payload.
 type tournamentCreateResponse struct {
 	TournamentID string `json:"tournament_id"`
+	Title        string `json:"title"`
 }
 
 type leaderboardRecord struct {
