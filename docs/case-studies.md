@@ -308,7 +308,8 @@ RANK   PLAYER              SCORE
 ```mermaid
 graph TB
     subgraph RPC["自定义 RPC"]
-        Register["tournament.lua<br/>register_rpc('create_tournament')"]
+        CreateRPC["tournament.lua<br/>register_rpc('create_tournament')<br/>支持可选 id + 字段默认值"]
+        WriteRPC["register_rpc('write_leaderboard_record')<br/>服务端授权写入<br/>支持 best/set/incr/decr operator"]
         DoubleEnc["双重 JSON 编码<br/>payload 须为 JSON 字符串"]
     end
 
@@ -325,7 +326,8 @@ graph TB
         ResetCallback["TournamentReset Hook<br/>size 清零,进入下一周期"]
     end
 
-    Register --> Create
+    CreateRPC --> Create
+    WriteRPC --> Write
     Create --> Join
     Join --> Write
     Write --> Read
@@ -350,10 +352,10 @@ sequenceDiagram
     Creator->>Nakama: 1. AuthenticateDevice → token
     Creator->>Nakama: 2. RPC: POST /v2/rpc/clientrpc.create_tournament<br/>Body: "\"{\\\"duration\\\":300,\\\"join_required\\\":true,...}\""
     Nakama->>Lua: Rpc("clientrpc.create_tournament", payload)
-    Lua->>Lua: json.decode(payload)
+    Lua->>Lua: json.decode → validate title → 应用字段默认值
     Lua->>DB: INSERT INTO leaderboard ... (duration!=0)
-    Lua-->>Nakama: json_encode({tournament_id="..."})
-    Nakama-->>Creator: {payload: "{\"tournament_id\":\"...\"}"}
+    Lua-->>Nakama: json_encode({tournament_id="...", title="5-Minute Tournament"})
+    Nakama-->>Creator: {payload: "{\"tournament_id\":\"...\",\"title\":\"...\"}"}
 
     par 10 个玩家并发
         Player->>Nakama: AuthenticateDevice → token
@@ -394,6 +396,7 @@ var rpcResp struct{ Payload string `json:"payload"` }
 json.NewDecoder(resp.Body).Decode(&rpcResp)       // 第一层: 提取字符串
 var result tournamentCreateResponse
 json.Unmarshal([]byte(rpcResp.Payload), &result)    // 第二层: 解析业务数据
+// result.TournamentID, result.Title
 ```
 
 **功能点 2: 锦标赛加入** — 当 `join_required=true` 时,玩家必须显式调用 `POST /v2/tournament/{id}/join` 后才能提交分数。Join 操作是幂等的(`ON CONFLICT DO NOTHING`),有 `max_size` 限制时通过原子 SQL 控制人数。

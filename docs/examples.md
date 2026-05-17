@@ -655,7 +655,9 @@ go run ./examples/matchmaker/
 1. 通过 **RPC 调用** 动态创建锦标赛 (而非依赖服务器启动时的静态配置)
 2. 锦标赛有**时间限制** (5 分钟),结束后自动停止接受分数
 3. 玩家需要先**加入** (join) 锦标赛才能提交分数
-4. 引入 **RPC 双重编解码** — 这是所有示例中序列化最复杂的模式
+4. **create_tournament RPC** 支持可选 `id` 参数和字段默认值,`title` 为必填
+5. 引入 **RPC 双重编解码** — 这是所有示例中序列化最复杂的模式
+6. **write_leaderboard_record RPC** — 服务端授权写入,支持 `operator` 参数
 
 ### 4.2 前置条件
 
@@ -669,12 +671,32 @@ cp data/modules/tournament.lua data/modules/
 ```lua
 local nk = require("nakama")
 
--- 注册 RPC 函数,可从客户端通过 /v2/rpc/clientrpc.create_tournament 调用
-nk.register_rpc(function(context, payload)
-    local args = nk.json_decode(payload)  -- payload 是 JSON 字符串
-    local id = nk.tournament_create(args.title, args.description, ...)
-    return nk.json_encode({tournament_id = id})
-end, "clientrpc.create_tournament")
+-- create_tournament RPC: 所有字段可选(title 除外),服务端提供默认值
+local function create_tournament(context, payload)
+  local data = nk.json_decode(payload)
+  if not data then
+    error("invalid JSON payload")
+  end
+
+  local id            = (data.id and data.id ~= "") and data.id or nk.uuid_v4()
+  local authoritative = data.authoritative or false
+  local sort_order    = data.sort_order or "desc"
+  local operator      = data.operator or "best"
+  local duration      = tonumber(data.duration) or 300
+  local reset_schedule = data.reset_schedule or ""
+  local title         = data.title or ""
+  -- ... 其他字段默认值 ...
+
+  if title == "" then
+    error("title is required")
+  end
+
+  nk.tournament_create(id, authoritative, sort_order, operator,
+    duration, reset_schedule, nil, title, ...)
+
+  return nk.json_encode({tournament_id = id, title = title})
+end
+nk.register_rpc(create_tournament, "clientrpc.create_tournament")
 ```
 
 ### 4.3 整体架构
@@ -744,14 +766,14 @@ HTTP 请求:
 
 ```
 服务端 (Lua):
-  nk.json_encode({tournament_id="abc123"})
-  → "{\"tournament_id\":\"abc123\"}"
+  nk.json_encode({tournament_id="abc123", title="5-Minute Tournament"})
+  → "{\"tournament_id\":\"abc123\",\"title\":\"5-Minute Tournament\"}"
 
 gRPC-Gateway:
-  Rpc 响应 → {payload: "{\"tournament_id\":\"abc123\"}", id: "..."}
+  Rpc 响应 → {payload: "{\"tournament_id\":\"abc123\",\"title\":\"5-Minute Tournament\"}", id: "..."}
 
 HTTP 响应 Body:
-  {"payload":"{\"tournament_id\":\"abc123\"}","id":"..."}
+  {"payload":"{\"tournament_id\":\"abc123\",\"title\":\"5-Minute Tournament\"}","id":"..."}
 
 客户端解码:
   json.Decode(body) → rpcResp  {Payload: "{\"tournament_id\":\"abc123\"}", Id: "..."}
@@ -792,6 +814,7 @@ func createTournament(token string) (string, error) {
     // 第四步:解析 Payload — 第二层解码
     var createResp struct {
         TournamentID string `json:"tournament_id"`
+        Title        string `json:"title"`
     }
     json.Unmarshal([]byte(rpcResp.Payload), &createResp)
 
@@ -850,6 +873,38 @@ func fetchTournamentRecords(token, tournamentID string) *tournamentRecordList {
 }
 ```
 
+#### 服务端授权写入分数 (RPC)
+
+`tournament.lua` 还注册了 `clientrpc.write_leaderboard_record` RPC,用于**服务端授权**写入任意玩家的锦标赛分数。调用方须持有 server key,可代替玩家提交分数,解决客户端不可信的场景。
+
+```go
+func writeTournamentRecord(serverToken, tournamentID, ownerID string, score int64) error {
+    argsJSON, _ := json.Marshal(map[string]any{
+        "tournament_id": tournamentID,
+        "owner_id":      ownerID,
+        "score":         score,
+        "subscore":      0,
+        "operator":      "best",   // "best"|"set"|"incr"|"decr"
+    })
+    payload, _ := json.Marshal(string(argsJSON))  // RPC 双重编码
+
+    req, _ := http.NewRequest("POST",
+        nakamaHost+"/v2/rpc/clientrpc.write_leaderboard_record",
+        bytes.NewReader(payload))
+    req.Header.Set("Content-Type", "application/json")
+    req.SetBasicAuth(serverKey, "")  // 需要 server key
+
+    // 响应: {"success":true,"rank":"1","score":"3500","subscore":"0"}
+}
+```
+
+**与客户端直接提交的区别:**
+
+| 方式 | 端点 | 认证 | 适用场景 |
+|------|------|------|----------|
+| 客户端直写 | `POST /v2/tournament/{id}` | 玩家 token | 信任客户端 |
+| RPC 授权写 | `POST /v2/rpc/clientrpc.write_leaderboard_record` | server key | 服务器验证后写入 |
+
 ### 4.8 运行
 
 ```bash
@@ -891,9 +946,9 @@ sequenceDiagram
     Creator->>Nakama: POST /v2/rpc/clientrpc.create_tournament
     Note over Creator: Body: "\"{\\"duration\\":300,...}\"" (双重编码)
     Nakama->>Lua: RPC 调用 → clientrpc.create_tournament(payload)
-    Lua->>Lua: json_decode → tournament_create(...) → json_encode
-    Lua-->>Nakama: {tournament_id: "abc123"}
-    Nakama-->>Creator: {"payload":"{\"tournament_id\":\"abc123\"}","id":"..."}
+    Lua->>Lua: json_decode → validate title → tournament_create(...) → json_encode
+    Lua-->>Nakama: {tournament_id: "abc123", title: "5-Minute Tournament"}
+    Nakama-->>Creator: {"payload":"{\"tournament_id\":\"abc123\",\"title\":\"5-Minute Tournament\"}","id":"..."}
     Note over Creator: json.Decode → json.Unmarshal → tournamentID
 
     par 玩家并发
